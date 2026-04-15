@@ -1,5 +1,6 @@
 import sys
 from lexer import lexer
+from parser import parser
 
 def main():
     if len(sys.argv) < 2:
@@ -11,11 +12,12 @@ def main():
         with open(filepath, 'r') as file:
             data = file.read()
             
-        lexer.input(data)
-        print(f"{'Token':<15} | {'Value':<15} | {'Line':<5}")
-        print("-" * 40)
-        for tok in lexer:
-            print(f"{tok.type:<15} | {str(tok.value):<15} | {tok.lineno:<5}")
+        result = parser.parse(data, lexer=lexer)
+        
+        if result:
+            print("Sucesso: Estrutura sintática correta!")
+            print("\nÁrvore Sintática (AST):")
+            print(result)
             
     except FileNotFoundError:
         print(f"Erro: Ficheiro {filepath} não encontrado.")
