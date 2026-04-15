@@ -21,7 +21,7 @@ reserved = {
 
 # Lista completa de tokens
 tokens = [
-    'ID', 'NUMBER', 'LABEL',
+    'ID', 'NUMBER', 'LABEL', 'STRING',
     'PLUS', 'MINUS', 'TIMES', 'DIVIDE', 'POWER',
     'EQUALS', 'LPAREN', 'RPAREN', 'COMMA',
     'EQ', 'NE', 'LT', 'LE', 'GT', 'GE',
@@ -71,6 +71,11 @@ def t_NUMBER(t):
     t.value = float(t.value) if '.' in t.value else int(t.value) # Converte para float se tiver ponto, senão para int
     return t
 
+# Strings entre plicas
+def t_STRING(t):
+    r"'.*?'"
+    t.value = t.value[1:-1] # Remove as plicas do valor final
+    return t
 
 # Comentários (No Fortran 77 moderno/free-form usa-se muitas vezes o '!')
 def t_COMMENT(t):

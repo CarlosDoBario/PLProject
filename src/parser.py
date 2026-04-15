@@ -123,6 +123,10 @@ def p_expression_number(p):
     '''expression : NUMBER'''
     p[0] = ('NUMBER_NODE', p[1])
 
+def p_expression_string(p):
+    '''expression : STRING'''
+    p[0] = ('STRING_NODE', p[1])
+
 def p_expression_id(p):
     '''expression : ID'''
     p[0] = ('VAR_NODE', p[1])
