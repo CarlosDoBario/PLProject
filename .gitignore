@@ -1,0 +1,28 @@
+# Python - Ficheiros compilados e cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PLY - Ficheiros gerados automaticamente pelo analisador sintático
+# (Estes ficheiros são recriados sempre que corres o parser)
+parsetab.py
+parser.out
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+
+# Configurações de IDEs
+.vscode/
+.idea/
+
+# Ficheiros de sistema
+.DS_Store
+Thumbs.db
+
+# Saídas de compilação (opcional)
+# Se quiseres que os ficheiros .vm gerados não sejam enviados, 
+# mas nota que o projeto exige um conjunto de testes com ficheiros .vm.
+# *.vm
