@@ -21,7 +21,7 @@ reserved = {
 
 # Lista completa de tokens
 tokens = [
-    'ID', 'NUMBER',
+    'ID', 'NUMBER', 'LABEL',
     'PLUS', 'MINUS', 'TIMES', 'DIVIDE', 'POWER',
     'EQUALS', 'LPAREN', 'RPAREN', 'COMMA',
     'EQ', 'NE', 'LT', 'LE', 'GT', 'GE',
@@ -59,14 +59,18 @@ def t_ID(t):
     t.type = reserved.get(t.value, 'ID') # Verifica se é uma palavra reservada, senão é um ID normal
     return t
 
+# Etiquetas (números no início da instrução)
+# def t_LABEL(t):
+#     r'\d+(?=\s+[a-zA-Z])' # Um número seguido de espaço e letra é provavelmente uma label
+#     t.value = int(t.value)
+#     return t
+
 # Números (Inteiros e Reais)
 def t_NUMBER(t):
     r'\d+(\.\d+)?'
-    if '.' in t.value:
-        t.value = float(t.value)
-    else:
-        t.value = int(t.value)
+    t.value = float(t.value) if '.' in t.value else int(t.value) # Converte para float se tiver ponto, senão para int
     return t
+
 
 # Comentários (No Fortran 77 moderno/free-form usa-se muitas vezes o '!')
 def t_COMMENT(t):
