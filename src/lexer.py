@@ -1,114 +1,181 @@
+# Analisador Léxico (Lexer) Fortran 77 
+
 import ply.lex as lex
 
-# Dicionário 
+# Palavras-Chave
 reserved = {
-    'program': 'PROGRAM',
-    'integer': 'INTEGER',
-    'real': 'REAL',
-    'logical': 'LOGICAL',
-    'if': 'IF',
-    'then': 'THEN',
-    'else': 'ELSE',
-    'endif': 'ENDIF',
-    'do': 'DO',
-    'continue': 'CONTINUE',
-    'stop': 'STOP',
-    'end': 'END',
-    'read': 'READ',
-    'print': 'PRINT',
-    'goto': 'GOTO'
+    'PROGRAM':    'PROGRAM',
+    'END':        'END',
+    'INTEGER':    'INTEGER',
+    'REAL':       'REAL',
+    'LOGICAL':    'LOGICAL',
+    'CHARACTER':  'CHARACTER',
+    'DOUBLE':     'DOUBLE',
+    'PRECISION':  'PRECISION',
+    'IF':         'IF',
+    'THEN':       'THEN',
+    'ELSE':       'ELSE',
+    'ELSEIF':     'ELSEIF',
+    'ENDIF':      'ENDIF',
+    'DO':         'DO',
+    'CONTINUE':   'CONTINUE',
+    'GOTO':       'GOTO',
+    'READ':       'READ',
+    'PRINT':      'PRINT',
+    'WRITE':      'WRITE',
+    'FORMAT':     'FORMAT',
+    'STOP':       'STOP',
+    'RETURN':     'RETURN',
+    'CALL':       'CALL',
+    'SUBROUTINE': 'SUBROUTINE',
+    'FUNCTION':   'FUNCTION',
+    'DIMENSION':  'DIMENSION',
+    'COMMON':     'COMMON',
+    'PARAMETER':  'PARAMETER',
+    'DATA':       'DATA',
+    'IMPLICIT':   'IMPLICIT',
+    'NONE':       'NONE',
+    'EXTERNAL':   'EXTERNAL',
+    'INTRINSIC':  'INTRINSIC',
+
+    # Funções intrínsecas -> palavras-chave
+    'MOD':        'MOD',
+    'ABS':        'ABS',
+    'INT':        'INT',
+    'FLOAT':      'FLOAT',
+    'SQRT':       'SQRT',
+    'SIN':        'SIN',
+    'COS':        'COS',
+    'MAX':        'MAX',
+    'MIN':        'MIN',
 }
 
-# Lista completa de tokens
-tokens = [
-    'ID', 'NUMBER', 'LABEL', 'STRING',
-    'PLUS', 'MINUS', 'TIMES', 'DIVIDE', 'POWER',
-    'EQUALS', 'LPAREN', 'RPAREN', 'COMMA',
-    'EQ', 'NE', 'LT', 'LE', 'GT', 'GE',
-    'AND', 'OR', 'NOT', 'TRUE', 'FALSE'
-] + list(reserved.values())
+tokens = list(set(reserved.values())) + [
+    'ID',
+    'INTEGER_CONST',
+    'REAL_CONST',
+    'STRING_CONST',
+    'PLUS', 'MINUS', 'TIMES', 'DIVIDE', 'POWER', # Operadores aritméticos
+    'OP_EQ', 'OP_NE', 'OP_LT', 'OP_LE', 'OP_GT', 'OP_GE', # Relacionais (notação .OP.)
+    'OP_AND', 'OP_OR', 'OP_NOT', # Lógicos (notação .OP.)
+    'TRUE', 'FALSE', # Literais lógicos
+    'LPAREN', 'RPAREN',
+    'COMMA', 'EQUALS', 'COLON', 'STAR', # Pontuação
+    'NEWLINE', # Linha
+]
 
-# Expressões regulares para tokens simples
-t_PLUS    = r'\+'
-t_MINUS   = r'-'
-t_TIMES   = r'\*'
-t_DIVIDE  = r'/'
-t_POWER   = r'\*\*'
-t_EQUALS  = r'='
-t_LPAREN  = r'\('
-t_RPAREN  = r'\)'
-t_COMMA   = r','
+# Regras Simples
+t_PLUS   = r'\+'
+t_MINUS  = r'-'
+t_POWER  = r'\*\*'
+t_TIMES  = r'\*'
+t_DIVIDE = r'/'
+t_STAR   = r'\*'
+t_LPAREN = r'\('
+t_RPAREN = r'\)'
+t_COMMA  = r','
+t_EQUALS = r'='
+t_COLON  = r':'
 
-# Operadores relacionais e lógicos do Fortran 
-t_EQ = r'\.EQ\.'
-t_NE = r'\.NE\.'
-t_LT = r'\.LT\.'
-t_LE = r'\.LE\.'
-t_GT = r'\.GT\.'
-t_GE = r'\.GE\.'
-t_AND = r'\.AND\.'
-t_OR = r'\.OR\.'
-t_NOT = r'\.NOT\.'
-t_TRUE = r'\.TRUE\.'
-t_FALSE = r'\.FALSE\.'
+# Operadores Relacionais e Lógicos com Pontos
+def t_TRUE(t):
+    r'\.TRUE\.'
+    t.value = True
+    return t
 
-# Identificadores e palavras reservadas
+def t_FALSE(t):
+    r'\.FALSE\.'
+    t.value = False
+    return t
+
+def t_OP_EQ(t):
+    r'\.EQ\.'
+    return t
+
+def t_OP_NE(t):
+    r'\.NE\.'
+    return t
+
+def t_OP_LE(t):
+    r'\.LE\.'
+    return t
+
+def t_OP_LT(t):
+    r'\.LT\.'
+    return t
+
+def t_OP_GE(t):
+    r'\.GE\.'
+    return t
+
+def t_OP_GT(t):
+    r'\.GT\.'
+    return t
+
+def t_OP_AND(t):
+    r'\.AND\.'
+    return t
+
+def t_OP_OR(t):
+    r'\.OR\.'
+    return t
+
+def t_OP_NOT(t):
+    r'\.NOT\.'
+    return t
+
+# Literais
+def t_REAL_CONST(t):
+    r'\d+\.\d*([Ee][+-]?\d+)?|\.\d+([Ee][+-]?\d+)?|\d+[Ee][+-]?\d+'
+    t.value = float(t.value)
+    return t
+
+def t_INTEGER_CONST(t):
+    r'\d+'
+    t.value = int(t.value)
+    return t
+
+def t_STRING_CONST(t):
+    r"'[^']*'|\"[^\"]*\""
+    t.value = t.value[1:-1]
+    return t
+
+# Ids
 def t_ID(t):
-    r'[a-zA-Z][a-zA-Z0-9]*'
-    t.value = t.value.lower() # Converte para minúsculas para garantir case-insensitivity
-    t.type = reserved.get(t.value, 'ID') # Verifica se é uma palavra reservada, senão é um ID normal
+    r'[A-Za-z][A-Za-z0-9_]*'
+    t.type = reserved.get(t.value.upper(), 'ID')
+    t.value = t.value.upper()
     return t
 
-# Etiquetas (números no início da instrução)
-# def t_LABEL(t):
-#     r'\d+(?=\s+[a-zA-Z])' # Um número seguido de espaço e letra é provavelmente uma label
-#     t.value = int(t.value)
-#     return t
-
-# Números (Inteiros e Reais)
-def t_NUMBER(t):
-    r'\d+(\.\d+)?'
-    t.value = float(t.value) if '.' in t.value else int(t.value) # Converte para float se tiver ponto, senão para int
-    return t
-
-# Strings entre plicas
-def t_STRING(t):
-    r"'.*?'"
-    t.value = t.value[1:-1] # Remove as plicas do valor final
-    return t
-
-# Comentários (No Fortran 77 moderno/free-form usa-se muitas vezes o '!')
-def t_COMMENT(t):
-    r'!.*'
-    pass  # Ignora o conteúdo
-
-# Ignorar espaços e tabulações
-t_ignore = ' \t'
-
-# Controlar números de linha
-def t_newline(t):
+# Newlines
+def t_NEWLINE(t):
     r'\n+'
     t.lexer.lineno += len(t.value)
+    return t
 
-# Tratamento de erros léxicos
+t_ignore = ' \t\r'
+
 def t_error(t):
-    print(f"Caracter ilegal: {t.value[0]} na linha {t.lexer.lineno}")
+    print(f"[Lexer] Carácter ilegal {t.value[0]!r} na linha {t.lexer.lineno}")
     t.lexer.skip(1)
 
-# Construir o lexer
-lexer = lex.lex()
+def build_lexer(**kwargs):
+    """Constrói e devolve o lexer PLY."""
+    return lex.lex(**kwargs)
 
-if __name__ == "__main__":
-    data = '''
-    PROGRAM TESTE
-    INTEGER A, B
-    A = 10
-    B = 20
-    IF (A .LT. B) THEN
-        PRINT *, A
-    ENDIF
-    END
-    '''
-    lexer.input(data)
+
+# Teste do lexer
+if __name__ == '__main__':
+    import sys
+    from preprocessor import preprocess
+
+    src = open(sys.argv[1]).read() if len(sys.argv) > 1 else """
+      PROGRAM HELLO
+      PRINT *, 'Ola, Mundo!'
+      END
+"""
+    normalized = preprocess(src)
+    lexer = build_lexer()
+    lexer.input(normalized)
     for tok in lexer:
         print(tok)
