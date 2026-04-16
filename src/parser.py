@@ -1,6 +1,6 @@
 # Analisador Sintático (Parser) para Fortran 77 
 import ply.yacc as yacc
-from .lexer import tokens, build_lexer  # noqa: F401
+from .lexer import tokens, build_lexer
 from .ast_nodes import *
 
 # Precedência de Operadores (do menor para o maior)
@@ -488,7 +488,7 @@ def build_parser(**kwargs):
 
 if __name__ == '__main__':
     import sys
-    from preprocessor import preprocess
+    from .preprocessor import preprocess
     src = open(sys.argv[1]).read()
     normalized = preprocess(src)
     parser, lexer = build_parser(debug=False)
