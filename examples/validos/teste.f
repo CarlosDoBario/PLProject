@@ -1,7 +1,0 @@
-PROGRAM SOMA
-  INTEGER A, B, RESULT
-  A = 10
-  B = 20
-  RESULT = A + B
-  PRINT *, RESULT
-END
