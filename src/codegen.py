@@ -1,9 +1,26 @@
-# Gerador de Código para a Máquina Virtual (VM) baseada em pilha.
-# Arquitectura da VM:
-  # - Pilha de operandos
-  # - Frame de globals (variáveis globais indexadas por endereço)
-  # - Frames de locals (variáveis locais relativas ao frame pointer)
-  # - Heap simples para arrays
+# Gerador de Código para a Máquina Virtual (VM) baseada em pilha
+#   Arquitetura da VM 
+#     - Pilha de operandos
+#     - Frame de globals (variáveis globais indexadas por endereço)
+#     - Frames de locals (variáveis locais relativas ao frame pointer)
+#     - Heap simples para arrays
+"""
+Instruções geradas:
+  START / STOP
+  PUSHI n, PUSHR f, PUSHS "s"
+  PUSHG n, POPG n
+  PUSHL n, POPL n
+  ADD, SUB, MUL, DIV, MOD, NEG
+  ADDF, SUBF, MULF, DIVF
+  INF, INFEQ, SUP, SUPEQ, EQUAL, NEQU
+  AND, OR, NOT
+  JUMP L, JZ L, JNZ L
+  PUSHA L, CALL, RETURN
+  ALLOC n, FREE n
+  PADD, LOAD n, STORE n
+  READ, READR, READS
+  WRITEI, WRITER, WRITES, WRITELN
+"""
 
 from .ast_nodes import *
 from .semantic import SemanticAnalyzer, Symbol, SymbolTable, implicit_type, INTRINSICS
@@ -14,14 +31,14 @@ class CodeGenerator:
         self.code: list[str] = []
         self._label_count = 0
         self._current_table: SymbolTable | None = None
-        self._is_global = True   # True = usar PUSHG/POPG, False = PUSHL/POPL
-        self._do_end_labels: dict[int, str] = {}  # fortran_label → vm_label
-        self._fortran_labels: dict[int, str] = {}  # label stmt → vm_label
+        self._is_global = True 
+        self._do_end_labels: dict[int, str] = {} 
+        self._fortran_labels: dict[int, str] = {}  
         self._current_unit = None
 
     # Gera código VM para o programa e devolve como string
     def generate(self, ast: ProgramFile) -> str:
-
+        
         # Separar o programa principal das funções/subrotinas
         main = None
         subprograms = []
@@ -51,7 +68,7 @@ class CodeGenerator:
 
         return '\n'.join(self.code)
 
-    # Emissão de Código 
+    # Emissão de Código
     def emit(self, *parts):
         if not parts:
             self.code.append('')
@@ -96,21 +113,17 @@ class CodeGenerator:
         self._current_table = func.symbol_table
         self._is_global = False
 
-        # Reatribuir endereços: parâmetros estão ANTES do frame (endereços negativos)e locais estão DEPOIS (endereços positivos a partir de 0)
         self._assign_frame_addresses(func)
 
-        # Alocar espaço para variáveis locais (excluindo parâmetros)
         n_locals = self._count_locals(func)
         if n_locals > 0:
             self.emit('ALLOC', n_locals)
 
-        # Prólogo -> copiar argumentos para locais
         self._gen_function_prologue(func)
 
         self._build_label_map(func.statements)
         self._gen_statements(func.statements)
 
-        # Push valor de retorno (variável com o nome da função)
         ret_sym = func.symbol_table.lookup(func.name)
         if ret_sym:
             self._load_var(ret_sym)
@@ -134,10 +147,8 @@ class CodeGenerator:
         self.emit('RETURN')
 
     # Atribui endereços locais aos símbolos de uma função/subrotina
-    # Copiamos os argumentos para variáveis locais no início da função
-    # Todos os símbolos (params + locais) têm endereços relativos contíguos a partir de 0. Os parâmetros são inicializados por código de prólogo que os copia da pilha
     def _assign_frame_addresses(self, unit):
-
+        
         params = list(getattr(unit, 'params', []))
         addr = 0
         # Alocar variável de retorno (para funções)
@@ -161,7 +172,10 @@ class CodeGenerator:
             sym.address = addr
             addr += sym.size
 
-    # Gera código de prólogo: copia argumentos da pilha para variáveis locais
+    # Gera código de prólogo: copia argumentos da pilha para variáveis locais.
+    # Os argumentos estão na pilha em ordem (arg1, arg2, ..., argN, frame_retorno).
+    # Após CALL e ALLOC, a pilha tem: [frame | locals...]. Os argumentos estão ABAIXO do frame de retorno
+    # READ os argumentos da posição correta
     def _gen_function_prologue(self, unit):
         
         params = list(getattr(unit, 'params', []))
@@ -169,14 +183,14 @@ class CodeGenerator:
         for i, pname in enumerate(params):
             sym = unit.symbol_table.lookup_local(pname)
             if sym:
-                # Arg i está em stack[fp_before_call - n + i]
-                # offset = -(n - i) - 1  (1 slot para o frame RET)
+                
                 offset = -(n - i) - 1
                 self.emit('PUSHL', offset)
                 self._store_var(sym)
 
     # Conta variáveis locais (não-parâmetro) para ALLOC
     def _count_locals(self, unit) -> int:
+        
         params = set(unit.params) if hasattr(unit, 'params') else set()
         count = 0
         for sym in unit.symbol_table.all_local():
@@ -184,14 +198,14 @@ class CodeGenerator:
                 count += sym.size
         return count
 
-    # Para arrays globais, reservar espaço extra no heap via ALLOC (simplificado)
+    # Para arrays globais, reservar espaço extra no heap via ALLOC (simplificado
     def _alloc_arrays(self, table: SymbolTable):
-        # Arrays ficam em posições consecutivas de globals
-        pass  
+        pass  # arrays ficam em posições consecutivas de globals
 
     # Mapa de Labels Fortran
+    # Pré-passa para associar labels Fortran a labels VM
     def _build_label_map(self, stmts):
-        """Pré-passa para associar labels Fortran a labels VM."""
+        
         self._fortran_labels = {}
         self._do_end_labels = {}
         self._scan_labels(stmts)
@@ -260,11 +274,10 @@ class CodeGenerator:
         elif isinstance(target, ArrayRef):
             sym = self._lookup(target.name)
             self._array_address(sym, target.indices)
-            # Valor já está na pilha; endereço do elemento também -> Precisamos: STORE 1
-            # Guardar valor em temp, calcular endereço, store
+            
             self.emit('STORE', 1)
 
-    # IF 
+    # IF
     def _gen_if(self, stmt: IfStatement):
         else_lbl = self.new_label('ELSE')
         end_lbl = self.new_label('ENDIF')
@@ -307,10 +320,11 @@ class CodeGenerator:
         # Corpo do DO (sem a instrução CONTINUE final que já tem o label)
         for s in stmt.body:
             if isinstance(s, ContinueStatement) and s.label == stmt.end_label:
-                # Emitir o label Fortran aqui como label de continuação
+                
                 fl = self._fortran_labels.get(stmt.end_label)
                 if fl:
                     self.emit_label(fl)
+                
                 self._load_var(var_sym)
                 if stmt.step:
                     self._gen_expr(stmt.step)
@@ -336,7 +350,6 @@ class CodeGenerator:
 
     # CONTINUE
     def _gen_continue(self, stmt: ContinueStatement):
-        # O label já foi emitido por _gen_stmt via label Fortran
         pass
 
     # PRINT
@@ -375,12 +388,12 @@ class CodeGenerator:
 
     # CALL
     def _gen_call(self, stmt: CallStatement):
-        # Passar argumentos na pilha
+
         for arg in stmt.args:
             self._gen_expr(arg)
         self.emit('PUSHA', stmt.name)
         self.emit('CALL')
-        # Subrotinas não deixam valor na pilha, funções sim
+
         sym = self.sem.global_table.lookup(stmt.name)
         if sym and sym.type_ != 'VOID':
             self.emit('POP', 1)  # descartar valor de retorno se CALL de stmt
@@ -422,11 +435,11 @@ class CodeGenerator:
 
         elif isinstance(node, ArrayRef):
             sym = self._lookup(node.name)
-            # Resolver ambiguidade -> A(I) pode ser array OU chamada de função
-            # Se o nome está declarado na tabela global como função, é uma chamada
+            
             global_sym = self.sem.global_table.lookup(node.name)
             is_func_call = (global_sym is not None and global_sym.is_function)
             if is_func_call:
+                # Tratar como chamada de função
                 for arg in node.indices:
                     self._gen_expr(arg)
                 self.emit('PUSHA', node.name)
@@ -456,7 +469,7 @@ class CodeGenerator:
         is_real = (lt == 'REAL' or rt == 'REAL')
 
         self._gen_expr(node.left)
-        # Converter para real se necessário
+        
         if is_real and lt != 'REAL':
             self.emit('ITOF')
 
@@ -478,10 +491,40 @@ class CodeGenerator:
         logical = {'.AND.': 'AND', '.OR.': 'OR'}
 
         if op == '**':
-            # x**y: chamada de pow simplificada (inteiro)
+            
+            lbl_check = self.new_label('POW_CHK')
+            lbl_end   = self.new_label('POW_END')
+            lbl_base  = self.new_label('POW_BASE') 
+            
+            tmp_base = self._alloc_temp()
+            tmp_exp  = self._alloc_temp()
+            tmp_res  = self._alloc_temp()
+            # Guardar expoente e base
+            self.emit('POPG', tmp_exp)  
+            self.emit('POPG', tmp_base)
+            # resultado = 1
+            self.emit('PUSHI', 1)
+            self.emit('POPG', tmp_res)
+            # Loop: while exp > 0: res *= base; exp -= 1
+            self.emit_label(lbl_check)
+            self.emit('PUSHG', tmp_exp)
             self.emit('PUSHI', 0)
-            # Gerar loop de multiplicação inline -> abordagem simples por recursão do gerador
-            self._gen_power()
+            self.emit('SUP')  
+            self.emit('JZ', lbl_end)
+            self.emit('PUSHG', tmp_res)
+            self.emit('PUSHG', tmp_base)
+            self.emit('MUL')
+            self.emit('POPG', tmp_res)
+            self.emit('PUSHG', tmp_exp)
+            self.emit('PUSHI', 1)
+            self.emit('SUB')
+            self.emit('POPG', tmp_exp)
+            self.emit('JUMP', lbl_check)
+            self.emit_label(lbl_end)
+            self.emit('PUSHG', tmp_res)
+            self._free_temp(tmp_res)
+            self._free_temp(tmp_exp)
+            self._free_temp(tmp_base)
         elif op in arith:
             self.emit(arith[op])
         elif op in relational:
@@ -491,10 +534,28 @@ class CodeGenerator:
         else:
             self.emit(f'; OP desconhecido {op}')
 
-    # Geração de potência – já a**b está na pilha (base, exp)
-    def _gen_power(self):
-        # Substituir pelo loop: resultado = 1; while b > 0 : resultado *= a; b--
-        self.emit('; POWER (** não directamente suportado – simplificado)')
+    # Registos Temporários
+    # Usados internamente pelo gerador para operações que precisam de memória auxiliar (ex: potência). Alocados num espaço 
+    # reservado acima dos globais do programa (endereços altos, a partir de 4000).
+
+    _TEMP_BASE = 4000
+
+    def _alloc_temp(self) -> int:
+        """Reserva um slot de global temporário e devolve o seu endereço."""
+        if not hasattr(self, '_temp_pool'):
+            self._temp_pool: list[int] = []
+            self._temp_next: int = self._TEMP_BASE
+        if self._temp_pool:
+            return self._temp_pool.pop()
+        addr = self._temp_next
+        self._temp_next += 1
+        return addr
+
+    def _free_temp(self, addr: int):
+        """Liberta um slot temporário para reutilização."""
+        if not hasattr(self, '_temp_pool'):
+            self._temp_pool = []
+        self._temp_pool.append(addr)
 
     def _gen_unary_op(self, node: UnaryOp):
         self._gen_expr(node.operand)
@@ -511,7 +572,7 @@ class CodeGenerator:
 
     # Gera código para chamada de função (intrínseca ou definida)
     def _gen_function_call(self, node: FunctionCall):
-        """Gera código para chamada de função (intrínseca ou definida)."""
+        
         name = node.name
 
         # Funções intrínsecas
@@ -551,24 +612,52 @@ class CodeGenerator:
             self.emit('PUSHA', name)
             self.emit('CALL')
 
-    # Gera código para MAX/MIN com 2+ argumentos
+    # Gera código correto para MAX/MIN com 2+ argumentos
+    # 1. Guardar 'current' num temporário 2. Avaliar 'next'
+    # 3. Comparar: se next > current (MAX) ou next < current (MIN)→ result = next, senão → result = current
+    # 4. Repetir para os restantes argumentos
     def _gen_max_min(self, node: FunctionCall):
+        
+        is_max = (node.name == 'MAX')
+        cmp_op = 'SUP' if is_max else 'INF'
 
+        tmp = self._alloc_temp()
         self._gen_expr(node.args[0])
-        op = 'SUPEQ' if node.name == 'MAX' else 'INFEQ'
-        for arg in node.args[1:]:
-            lbl_keep = self.new_label('MM_KEEP')
-            lbl_end  = self.new_label('MM_END')
-            # Duplicar topo da pilha: não se tem DUP, usar uma variável temp ; Simplificação: gerar a comparação
-            self._gen_expr(arg)
-            self.emit('EQUAL')       # esta não é a lógica certa – simplificação
-            self.emit('JNZ', lbl_keep)
-            self._gen_expr(arg)
-            self.emit('JUMP', lbl_end)
-            self.emit_label(lbl_keep)
-            self.emit_label(lbl_end)
+        self.emit('POPG', tmp)
 
-    # Variáveis e Arrays 
+        for arg in node.args[1:]:
+            lbl_keep_cur = self.new_label('MM_CUR')
+            lbl_end      = self.new_label('MM_END')
+
+            # Avaliar next
+            self._gen_expr(arg) 
+            # Duplicar next num segundo temp para poder usá-lo depois
+            tmp_next = self._alloc_temp()
+            self.emit('POPG', tmp_next)
+
+            # Comparar: next op current
+            self.emit('PUSHG', tmp_next)
+            self.emit('PUSHG', tmp)
+            self.emit(cmp_op)
+            self.emit('JZ', lbl_keep_cur)
+
+            # next é melhor → actualizar tmp = next
+            self.emit('PUSHG', tmp_next)
+            self.emit('POPG', tmp)
+            self.emit('JUMP', lbl_end)
+
+            # current mantém-se
+            self.emit_label(lbl_keep_cur)
+            # tmp já tem current, nada a fazer
+
+            self.emit_label(lbl_end)
+            self._free_temp(tmp_next)
+
+        # Resultado final no topo da pilha
+        self.emit('PUSHG', tmp)
+        self._free_temp(tmp)
+
+    # Variáveis e Arrays
     def _load_var(self, sym: Symbol):
         if sym is None:
             self.emit('PUSHI', 0)
@@ -589,10 +678,10 @@ class CodeGenerator:
 
     # Calcula endereço de elemento de array e deixa na pilha
     def _array_address(self, sym: Symbol, indices):
-    
+        
         # Endereço base
         if self._is_global:
-            self.emit('PUSHGP')      # global pointer
+            self.emit('PUSHGP')
             self.emit('PUSHI', sym.address or 0)
             self.emit('PADD')
         else:
