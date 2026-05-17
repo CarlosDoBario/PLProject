@@ -1,5 +1,6 @@
 	START
 
+	PUSHN 23
 	PUSHS "Introduza um numero inteiro positivo:"
 	WRITES
 	WRITELN

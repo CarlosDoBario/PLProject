@@ -13,8 +13,8 @@ class CodeGenerator:
         self._fortran_labels: dict[int, str] = {}
         self._do_end_labels: dict[int, str] = {}
         self._current_unit = None
-        self._TEMP_BASE = 4000
-        self._temp_next: int = self._TEMP_BASE
+        self._TEMP_BASE = 0
+        self._temp_next: int = 0
         self._temp_pool: list[int] = []
 
     def generate(self, ast: ProgramFile) -> str:
@@ -25,6 +25,15 @@ class CodeGenerator:
                 main = unit
             else:
                 subprograms.append(unit)
+
+        # ENGENHARIA DE PRECISÃO: Define a base temporária dinâmica logo após
+        # o fim das variáveis do MAIN para evitar qualquer colisão de memória.
+        if main and main.symbol_table:
+            self._TEMP_BASE = main.symbol_table._next_addr
+        else:
+            self._TEMP_BASE = self.sem.global_table._next_addr
+            
+        self._temp_next = self._TEMP_BASE
 
         self.emit('START')
         if subprograms and main:
@@ -43,7 +52,7 @@ class CodeGenerator:
 
         return '\n'.join(self.code)
 
-    # Emissão
+    # Emissão de Instruções
     def emit(self, *parts):
         if not parts:
             self.code.append('')
@@ -55,9 +64,10 @@ class CodeGenerator:
 
     def new_label(self, prefix='L') -> str:
         self._label_count += 1
-        return f'{prefix}{self._label_count}'
+        clean_prefix = prefix.replace('_', '')
+        return f'{clean_prefix}{self._label_count}'
 
-    # Registos Temporários
+    # Gestão de Registos Temporários
     def _alloc_temp(self) -> int:
         if self._temp_pool:
             return self._temp_pool.pop()
@@ -68,11 +78,16 @@ class CodeGenerator:
     def _free_temp(self, addr: int):
         self._temp_pool.append(addr)
 
-    # Programa Principal
+    # Bloco Principal
     def _gen_program(self, prog: Program):
         self._current_table = prog.symbol_table
         self._is_global = True
         self._current_unit = prog
+        
+        # Aloca espaço inicial na pilha global salvaguardando variáveis + temporários
+        if self._TEMP_BASE + 20 > 0:
+            self.emit('PUSHN', self._TEMP_BASE + 20)
+            
         self._build_label_map(prog.statements)
         self._gen_statements(prog.statements)
         self.emit('STOP')
@@ -97,9 +112,11 @@ class CodeGenerator:
         self._gen_function_prologue(func)
         self._build_label_map(func.statements)
         self._gen_statements(func.statements)
+        
         ret_sym = func.symbol_table.lookup(func.name)
         if ret_sym:
             self._load_var(ret_sym)
+            self.emit('STOREL', -1)
         self.emit('RETURN')
 
     def _gen_subroutine(self, sub: Subroutine):
@@ -116,7 +133,7 @@ class CodeGenerator:
         self._gen_statements(sub.statements)
         self.emit('RETURN')
 
-    # Gestão de Frames
+    # Gestão de Ativação de Frames
     def _assign_frame_addresses(self, unit):
         params = list(getattr(unit, 'params', []))
         addr = 0
@@ -144,22 +161,17 @@ class CodeGenerator:
         for i, pname in enumerate(params):
             sym = unit.symbol_table.lookup_local(pname)
             if sym:
-                offset = -(n - i) - 1
+                offset = -(n - i)
                 self.emit('PUSHL', offset)
                 self._store_var(sym)
 
     def _count_locals(self, unit) -> int:
-        params = set(getattr(unit, 'params', []))
         count = 0
         for sym in unit.symbol_table.all_local():
-            if sym.name in params:
-                continue
-            if isinstance(unit, Function) and sym.name == unit.name:
-                continue
             count += sym.size
         return count
 
-    # Mapa de Labels Fortran
+    # Mapeamento de Etiquetas
     def _build_label_map(self, stmts):
         self._fortran_labels = {}
         self._do_end_labels = {}
@@ -180,7 +192,7 @@ class CodeGenerator:
                 self._scan_labels(stmt.then_stmts)
                 self._scan_labels(stmt.else_stmts)
 
-    # Geração de Instruções
+    # Processamento de Instruções
     def _gen_statements(self, stmts):
         for stmt in stmts:
             self._gen_stmt(stmt)
@@ -214,7 +226,6 @@ class CodeGenerator:
         elif isinstance(stmt, StopStatement):
             self.emit('STOP')
 
-    # Atribuição
     def _gen_assignment(self, stmt: Assignment):
         target = stmt.target
         self._gen_expr(stmt.value)
@@ -230,7 +241,6 @@ class CodeGenerator:
             self.emit('STORE', 0)
             self._free_temp(tmp)
 
-    # IF
     def _gen_if(self, stmt: IfStatement):
         else_lbl = self.new_label('ELSE')
         end_lbl  = self.new_label('ENDIF')
@@ -243,7 +253,6 @@ class CodeGenerator:
             self._gen_statements(stmt.else_stmts)
         self.emit_label(end_lbl)
 
-    # DO Loop
     def _gen_do(self, stmt: DoLoop):
         var_sym = self._lookup(stmt.var)
         if not var_sym:
@@ -280,7 +289,6 @@ class CodeGenerator:
 
         self.emit_label(end_lbl)
 
-    # GOTO
     def _gen_goto(self, stmt: GotoStatement):
         vm_lbl = self._fortran_labels.get(stmt.target_label)
         if vm_lbl is None:
@@ -288,7 +296,6 @@ class CodeGenerator:
             self._fortran_labels[stmt.target_label] = vm_lbl
         self.emit('JUMP', vm_lbl)
 
-    # PRINT
     def _gen_print(self, stmt: PrintStatement):
         for i, item in enumerate(stmt.items):
             t = self._expr_type_of(item)
@@ -304,11 +311,9 @@ class CodeGenerator:
                 self.emit('WRITES')
         self.emit('WRITELN')
 
-    # READ
     def _gen_read(self, stmt: ReadStatement):
         for var in stmt.variables:
-            t = self._var_type(var)
-
+            t = self._expr_type_of(var)
             self.emit('READ')
             if t == 'REAL':
                 self.emit('ATOF')
@@ -328,23 +333,22 @@ class CodeGenerator:
             else:
                 self._store_var(sym)
 
-    # CALL
     def _gen_call(self, stmt: CallStatement):
         for arg in stmt.args:
             self._gen_expr(arg)
         self.emit('PUSHA', stmt.name)
         self.emit('CALL')
 
-    # RETURN
     def _gen_return(self, stmt: ReturnStatement):
         if isinstance(self._current_unit, Function):
             func = self._current_unit
             ret_sym = func.symbol_table.lookup(func.name)
             if ret_sym:
                 self._load_var(ret_sym)
+                self.emit('STOREL', -1)
         self.emit('RETURN')
 
-    # Expressões
+    # Expressões e Motores de Avaliação
     def _gen_expr(self, node):
         if node is None:
             self.emit('PUSHI', 0)
@@ -352,21 +356,16 @@ class CodeGenerator:
 
         if isinstance(node, IntLiteral):
             self.emit('PUSHI', node.value)
-
         elif isinstance(node, RealLiteral):
             self.emit('PUSHF', node.value)
-
         elif isinstance(node, StringLiteral):
             escaped = node.value.replace('"', '\\"')
             self.emit('PUSHS', f'"{escaped}"')
-
         elif isinstance(node, LogicalLiteral):
             self.emit('PUSHI', 1 if node.value else 0)
-
         elif isinstance(node, Identifier):
             sym = self._lookup(node.name)
             self._load_var(sym) if sym else self.emit('PUSHI', 0)
-
         elif isinstance(node, ArrayRef):
             sym = self._lookup(node.name)
             global_sym = self.sem.global_table.lookup(node.name)
@@ -383,17 +382,13 @@ class CodeGenerator:
                     self._gen_expr(arg)
                 self.emit('PUSHA', node.name)
                 self.emit('CALL')
-
         elif isinstance(node, FunctionCall):
             self._gen_function_call(node)
-
         elif isinstance(node, BinaryOp):
             self._gen_binary_op(node)
-
         elif isinstance(node, UnaryOp):
             self._gen_unary_op(node)
 
-    # Operações Binárias
     def _gen_binary_op(self, node: BinaryOp):
         lt = self._expr_type_of(node.left)
         rt = self._expr_type_of(node.right)
@@ -410,28 +405,25 @@ class CodeGenerator:
         op = node.op
 
         if op == '**':
+            tmp_exp = self._alloc_temp()
+            tmp_base = self._alloc_temp()
+            if is_real: self.emit('FTOI')
+            self.emit('STOREG', tmp_exp)
+            if is_real: self.emit('FTOI')
+            self.emit('STOREG', tmp_base)
+            self.emit('PUSHG', tmp_base)
+            self.emit('PUSHG', tmp_exp)
+            self._free_temp(tmp_exp)
+            self._free_temp(tmp_base)
             self._gen_power_loop()
             return
 
-        # Aritmética
         if is_real:
             arith = {'+': 'FADD', '-': 'FSUB', '*': 'FMUL', '/': 'FDIV'}
+            relational = {'.LT.': 'FINF', '.LE.': 'FINFEQ', '.GT.': 'FSUP', '.GE.': 'FSUPEQ', '.EQ.': 'EQUAL'}
         else:
-            arith = {'+': 'ADD',  '-': 'SUB',  '*': 'MUL',  '/': 'DIV'}
-
-        # Relacionais
-        if is_real:
-            relational = {
-                '.LT.': 'FINF',   '.LE.': 'FINFEQ',
-                '.GT.': 'FSUP',   '.GE.': 'FSUPEQ',
-                '.EQ.': 'EQUAL',
-            }
-        else:
-            relational = {
-                '.LT.': 'INF',   '.LE.': 'INFEQ',
-                '.GT.': 'SUP',   '.GE.': 'SUPEQ',
-                '.EQ.': 'EQUAL',
-            }
+            arith = {'+': 'ADD', '-': 'SUB', '*': 'MUL', '/': 'DIV'}
+            relational = {'.LT.': 'INF', '.LE.': 'INFEQ', '.GT.': 'SUP', '.GE.': 'SUPEQ', '.EQ.': 'EQUAL'}
 
         logical = {'.AND.': 'AND', '.OR.': 'OR'}
 
@@ -445,11 +437,7 @@ class CodeGenerator:
         elif op in logical:
             self.emit(logical[op])
 
-    # Potência (**)
-    # Topo da pilha: [base, exp] (base empilhado primeiro). Implementa res = 1; while exp > 0: res *= base; exp -= 1
-    # usando registos temporários em gp[4000+]
     def _gen_power_loop(self):
-        
         lbl_check = self.new_label('POWCHK')
         lbl_end   = self.new_label('POWEND')
         tmp_base  = self._alloc_temp()
@@ -466,10 +454,12 @@ class CodeGenerator:
         self.emit('PUSHI', 0)
         self.emit('SUP')
         self.emit('JZ', lbl_end)
+        
         self.emit('PUSHG', tmp_res)
         self.emit('PUSHG', tmp_base)
         self.emit('MUL')
         self.emit('STOREG', tmp_res)
+        
         self.emit('PUSHG', tmp_exp)
         self.emit('PUSHI', 1)
         self.emit('SUB')
@@ -483,7 +473,6 @@ class CodeGenerator:
         self._free_temp(tmp_exp)
         self._free_temp(tmp_base)
 
-    # Operação Unária
     def _gen_unary_op(self, node: UnaryOp):
         self._gen_expr(node.operand)
         if node.op == '-':
@@ -497,15 +486,16 @@ class CodeGenerator:
         elif node.op == '.NOT.':
             self.emit('NOT')
 
-    # Chamadas de Função
     def _gen_function_call(self, node: FunctionCall):
         name = node.name
-
         if name == 'MOD':
+            bytes_arg0 = self._expr_type_of(node.args[0])
+            bytes_arg1 = self._expr_type_of(node.args[1])
             self._gen_expr(node.args[0])
+            if bytes_arg0 == 'REAL': self.emit('FTOI')
             self._gen_expr(node.args[1])
+            if bytes_arg1 == 'REAL': self.emit('FTOI')
             self.emit('MOD')
-
         elif name == 'ABS':
             lbl_pos = self.new_label('ABSPOS')
             lbl_end = self.new_label('ABSEND')
@@ -528,49 +518,36 @@ class CodeGenerator:
             self.emit('JUMP', lbl_end)
             self.emit_label(lbl_pos)
             self.emit_label(lbl_end)
-
         elif name == 'INT':
             self._gen_expr(node.args[0])
-            if self._expr_type_of(node.args[0]) == 'REAL':
-                self.emit('FTOI')
-
+            if self._expr_type_of(node.args[0]) == 'REAL': self.emit('FTOI')
         elif name == 'FLOAT':
             self._gen_expr(node.args[0])
-            if self._expr_type_of(node.args[0]) != 'REAL':
-                self.emit('ITOF')
-
+            if self._expr_type_of(node.args[0]) != 'REAL': self.emit('ITOF')
         elif name == 'SQRT':
             self._gen_expr(node.args[0])
-            if self._expr_type_of(node.args[0]) != 'REAL':
-                self.emit('ITOF')
-
+            if self._expr_type_of(node.args[0]) != 'REAL': self.emit('ITOF')
+            self.emit('SQRT')
         elif name == 'SIN':
             self._gen_expr(node.args[0])
-            if self._expr_type_of(node.args[0]) != 'REAL':
-                self.emit('ITOF')
+            if self._expr_type_of(node.args[0]) != 'REAL': self.emit('ITOF')
             self.emit('FSIN')
-
         elif name == 'COS':
             self._gen_expr(node.args[0])
-            if self._expr_type_of(node.args[0]) != 'REAL':
-                self.emit('ITOF')
+            if self._expr_type_of(node.args[0]) != 'REAL': self.emit('ITOF')
             self.emit('FCOS')
-
         elif name in ('MAX', 'MIN'):
             self._gen_max_min(node)
-
         else:
             for arg in node.args:
                 self._gen_expr(arg)
             self.emit('PUSHA', name)
             self.emit('CALL')
 
-    # MAX / MIN
     def _gen_max_min(self, node: FunctionCall):
         is_max  = (node.name == 'MAX')
         cmp_op  = 'SUP' if is_max else 'INF'
         tmp     = self._alloc_temp()
-
         self._gen_expr(node.args[0])
         self.emit('STOREG', tmp)
 
@@ -578,19 +555,15 @@ class CodeGenerator:
             lbl_keep = self.new_label('MMKEEP')
             lbl_end  = self.new_label('MMEND')
             tmp_next = self._alloc_temp()
-
             self._gen_expr(arg)
             self.emit('STOREG', tmp_next)
-
             self.emit('PUSHG', tmp_next)
             self.emit('PUSHG', tmp)
             self.emit(cmp_op)
             self.emit('JZ', lbl_keep)
-
             self.emit('PUSHG', tmp_next)
             self.emit('STOREG', tmp)
             self.emit('JUMP', lbl_end)
-
             self.emit_label(lbl_keep)
             self.emit_label(lbl_end)
             self._free_temp(tmp_next)
@@ -598,7 +571,6 @@ class CodeGenerator:
         self.emit('PUSHG', tmp)
         self._free_temp(tmp)
 
-    # Variáveis e Arrays
     def _load_var(self, sym: Symbol):
         if sym is None:
             self.emit('PUSHI', 0)
@@ -619,10 +591,8 @@ class CodeGenerator:
 
     def _array_address(self, sym: Symbol, indices):
         dims = sym.dims or [(1, 100)]
-        if self._is_global:
-            self.emit('PUSHGP')
-        else:
-            self.emit('PUSHFP')
+        if self._is_global: self.emit('PUSHGP')
+        else: self.emit('PUSHFP')
         self.emit('PUSHI', sym.address or 0)
         self.emit('PADD')
         lo = dims[0][0] if dims else 1
@@ -640,15 +610,28 @@ class CodeGenerator:
             self.emit('MUL')
             self.emit('PADD')
 
-    # Utils 
     def _lookup(self, name: str) -> Symbol | None:
         return self._current_table.lookup(name) if self._current_table else None
 
+    # Motor Estático de Inferência de Tipos Dedicado
     def _expr_type_of(self, node) -> str:
-        return self.sem._expr_type(node)
-
-    def _var_type(self, node) -> str:
+        if isinstance(node, IntLiteral): return 'INTEGER'
+        if isinstance(node, RealLiteral): return 'REAL'
+        if isinstance(node, LogicalLiteral): return 'LOGICAL'
+        if isinstance(node, StringLiteral): return 'CHARACTER'
         if isinstance(node, (Identifier, ArrayRef)):
             sym = self._lookup(node.name)
+            return sym.type_ if sym else implicit_type(node.name)
+        if isinstance(node, BinaryOp):
+            if node.op in ('.EQ.', '.NE.', '.LT.', '.LE.', '.GT.', '.GE.', '.AND.', '.OR.'): return 'LOGICAL'
+            lt = self._expr_type_of(node.left)
+            rt = self._expr_type_of(node.right)
+            return 'REAL' if 'REAL' in (lt, rt) else 'INTEGER'
+        if isinstance(node, UnaryOp):
+            if node.op == '.NOT.': return 'LOGICAL'
+            return self._expr_type_of(node.operand)
+        if isinstance(node, FunctionCall):
+            if node.name in INTRINSICS: return INTRINSICS[node.name][0]
+            sym = self.sem.global_table.lookup(node.name)
             return sym.type_ if sym else implicit_type(node.name)
         return 'INTEGER'

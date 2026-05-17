@@ -1,5 +1,6 @@
 	START
 
+	PUSHN 20
 	PUSHS "Ola, Mundo!"
 	WRITES
 	WRITELN
